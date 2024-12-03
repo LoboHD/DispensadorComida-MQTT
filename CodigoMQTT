@@ -1,0 +1,108 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <Servo.h>
+
+// Configuración del Wi-Fi
+const char* ssid = "iPhone de Kevin";  // SSID
+const char* password = "maeselobohd";  // clave
+
+// Configuración MQTT
+const char* mqtt_server = "broker.emqx.io";    // Dirección del broker MQTT
+const char* mqtt_topic = "dispensador/comando"; // Tema MQTT para recibir los comandos
+const char* mqtt_log = "dispensador/log"; // Tema MQTT para enviar logs
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+Servo servo1;
+int ledrojo = D1;
+int ledverde = D0;
+
+bool movimientoCompleto = false;
+bool mensajeRecibido = false;
+
+// Función para enviar logs al MQTT
+void enviarLog(const char* mensaje) {
+  if (client.connected()) {
+    client.publish(mqtt_log, mensaje); // Publicar el log en el tema de logs
+  }
+  Serial.println(mensaje); // También imprimir el mensaje en el Serial Monitor
+}
+
+// Conexión al Wi-Fi
+void setup_wifi() {
+  delay(10);
+  enviarLog("Conectando a WiFi...");
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    Serial.print(".");
+  }
+  enviarLog("WiFi conectado.");
+  enviarLog(("IP: " + WiFi.localIP().toString()).c_str());
+}
+
+// Reconectar al servidor MQTT
+void reconnect() {
+  while (!client.connected()) {
+    enviarLog("Conectando al servidor MQTT...");
+    if (client.connect("ESP8266_Client")) {
+      enviarLog("Conectado al servidor MQTT.");
+      client.subscribe(mqtt_topic);
+    } else {
+      Serial.print("Error, rc=");
+      Serial.println(client.state());
+      delay(5000);
+    }
+  }
+}
+
+// Callback para manejar mensajes MQTT
+void callback(char* topic, byte* payload, unsigned int length) {
+  String mensaje = "";
+  for (int i = 0; i < length; i++) {
+    mensaje += (char)payload[i];
+  }
+
+  if (mensaje == "activar" && !movimientoCompleto && !mensajeRecibido) {
+    enviarLog("Comando recibido: activar.");
+    digitalWrite(ledverde, HIGH);
+    servo1.write(150); 
+    delay(300); 
+    digitalWrite(ledverde, LOW);
+    servo1.write(0);
+    movimientoCompleto = true;
+    mensajeRecibido = true;
+    enviarLog("Servo movido. Proceso completo.");
+    digitalWrite(ledrojo, HIGH);
+    delay(2000);
+    digitalWrite(ledrojo, LOW);
+  } else {
+    enviarLog("Comando ignorado o acción en proceso.");
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  servo1.attach(D2);
+  pinMode(ledverde, OUTPUT);
+  pinMode(ledrojo, OUTPUT);
+
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  if (movimientoCompleto) {
+    delay(3000);
+    movimientoCompleto = false;
+    mensajeRecibido = false;
+    enviarLog("Listo para recibir otro comando.");
+  }
+}
